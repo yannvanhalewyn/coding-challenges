@@ -2,9 +2,13 @@
 #define true 1
 #define false 0
 
-int file_exists(const char *filename) {
+int process_file(const char *filename) {
     FILE *file = fopen(filename, "r");
     if (file) {
+        int c;
+        while ((c = fgetc(file)) != EOF) {
+            printf("%c", c);
+        }
         fclose(file);
         return true;
     }
@@ -18,7 +22,7 @@ int main(int argc, char *argv[]) {
     }
     char* filename = argv[1];
 
-    if (file_exists(filename)) {
+    if (process_file(filename)) {
         printf("exists! %s", filename);
     }
     else {
