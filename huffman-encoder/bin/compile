@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-
-clang huffman.c -o out/huffman
