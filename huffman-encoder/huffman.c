@@ -1,8 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
 #define true 1
 #define false 0
 #define bool int
+
+#define ENCODING_TABLE_SIZE 256
+
+// Hufman Trees
+////////////////////////////////////////////////////////////////////////////////
 
 struct FreqEntry {
     char character;
@@ -15,8 +22,6 @@ typedef struct HuffmanNode {
     struct HuffmanNode *left;
     struct HuffmanNode *right;
 } HuffmanNode;
-
-
 
 HuffmanNode* create_node(unsigned char character, unsigned int weight) {
     HuffmanNode *node = (HuffmanNode*)malloc(sizeof(HuffmanNode));
@@ -87,7 +92,46 @@ HuffmanNode* build_huffman_tree(unsigned int freq[], size_t freq_size) {
     return nodes[0];
 }
 
-#define FREQ_SIZE 256
+// Prefix table
+////////////////////////////////////////////////////////////////////////////////
+
+typedef struct {
+    char code[ENCODING_TABLE_SIZE];
+    int length;
+    int exists;
+} HuffmanCode;
+
+// Builds a prefix table, going from char -> HuffmanCode
+void build_encoding_table(
+        HuffmanNode *node,
+        char *code, int depth,
+        HuffmanCode encoding_table[ENCODING_TABLE_SIZE]
+        ) {
+    if (node->left == NULL && node->right == NULL) {
+        // Null terminate current code str
+        code[depth] = '\0';
+        // Copy current code str to prefix table entry
+        HuffmanCode entry = encoding_table[(unsigned char)node->character];
+        strcpy(entry.code, code);
+        entry.exists = 1;
+        printf("Character '%c' (byte %d): code = %s\n",
+                node->character, (unsigned char)node->character, code);
+        return;
+    }
+    // Traverse left
+    if (node->left != NULL) {
+        code[depth] = '0';
+        build_encoding_table(node->left, code, depth + 1, encoding_table);
+    }
+
+    if (node->right != NULL) {
+        code[depth] = '1';
+        build_encoding_table(node->right, code, depth + 1, encoding_table);
+    }
+}
+
+// Processing File
+////////////////////////////////////////////////////////////////////////////////
 
 bool process_file(const char *filename) {
     FILE *file = fopen(filename, "r");
@@ -99,7 +143,7 @@ bool process_file(const char *filename) {
 
     printf("Processing %s\n", filename);
 
-    unsigned int freq[FREQ_SIZE] = {0};
+    unsigned int freq[ENCODING_TABLE_SIZE] = {0};
 
     int c;
     while ((c = fgetc(file)) != EOF) {
@@ -107,29 +151,12 @@ bool process_file(const char *filename) {
     }
     fclose(file);
 
-    HuffmanNode* root = build_huffman_tree(freq, FREQ_SIZE);
+    HuffmanNode* tree = build_huffman_tree(freq, ENCODING_TABLE_SIZE);
+    HuffmanCode encoding_table[ENCODING_TABLE_SIZE];
+    char huffman_codes[ENCODING_TABLE_SIZE];
+    build_encoding_table(tree, huffman_codes, 0, encoding_table);
 
-    // Print out the 5 highest values
-    struct FreqEntry highest[5] = { 0 };
-    for (int i = 0; i < 256; i++) {
-        if (highest[4].count < freq[i]) {
-            struct FreqEntry foo = { i, freq[i] };
-            highest[4] = foo;
-        }
-    }
-
-    HuffmanNode *node = root->right;
-    printf("Value %c - %d\n", node->character, node->weight);
-
-    struct FreqEntry print = highest[4];
-
-    if (print.character >= 32 && print.character < 127) {
-        // Printable ASCII character
-        printf("'%c' (byte %d): %u times\n", print.character, print.character, print.count);
-    } else {
-        // Non-printable character - just show the byte value
-        printf("(byte %d): %u times\n", print.character, print.count);
-    }
+    printf("Code for 'l': %s (length: %d)\n", encoding_table['l'].code, encoding_table['l'].length);
 
     return true;
 }
