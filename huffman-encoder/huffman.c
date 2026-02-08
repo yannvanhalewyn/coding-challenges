@@ -111,9 +111,9 @@ void build_encoding_table(
         // Null terminate current code str
         code[depth] = '\0';
         // Copy current code str to prefix table entry
-        HuffmanCode entry = encoding_table[(unsigned char)node->character];
-        strcpy(entry.code, code);
-        entry.exists = 1;
+        HuffmanCode *entry = &encoding_table[(unsigned char)node->character];
+        strcpy(entry->code, code);
+        entry->exists = 1;
         printf("Character '%c' (byte %d): code = %s\n",
                 node->character, (unsigned char)node->character, code);
         return;
@@ -153,10 +153,10 @@ bool process_file(const char *filename) {
 
     HuffmanNode* tree = build_huffman_tree(freq, ENCODING_TABLE_SIZE);
     HuffmanCode encoding_table[ENCODING_TABLE_SIZE];
-    char huffman_codes[ENCODING_TABLE_SIZE];
-    build_encoding_table(tree, huffman_codes, 0, encoding_table);
+    char code_buffer[ENCODING_TABLE_SIZE];
+    build_encoding_table(tree, code_buffer, 0, encoding_table);
 
-    printf("Code for 'l': %s (length: %d)\n", encoding_table['l'].code, encoding_table['l'].length);
+    printf("Code for 'l': %s (length: %d)\n", encoding_table['l'].code, encoding_table['l'].exists);
 
     return true;
 }
