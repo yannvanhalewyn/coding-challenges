@@ -1,4 +1,5 @@
 out := huffman
+
 run:
 	cargo run $(args)
 
