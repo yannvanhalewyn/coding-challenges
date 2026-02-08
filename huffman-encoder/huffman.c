@@ -152,7 +152,7 @@ bool process_file(const char *filename) {
     fclose(file);
 
     HuffmanNode* tree = build_huffman_tree(freq, ENCODING_TABLE_SIZE);
-    HuffmanCode encoding_table[ENCODING_TABLE_SIZE];
+    HuffmanCode encoding_table[ENCODING_TABLE_SIZE] = {0};
     char code_buffer[ENCODING_TABLE_SIZE];
     build_encoding_table(tree, code_buffer, 0, encoding_table);
 

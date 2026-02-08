@@ -1,8 +1,8 @@
 name := huffman
-output := ./out/$(name)
+output := $(name)
 
 run: $(output)
-	$< $(args)
+	./$< $(args)
 
 $(output): $(name).c
 	clang $< -o $@
