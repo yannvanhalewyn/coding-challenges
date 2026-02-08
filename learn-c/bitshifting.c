@@ -9,5 +9,18 @@ int main(int argc, char *argv[]) {
     printf("x << 3 : %d\n", x << 3); // 00001000 (8)
     printf("x << 7 : %d\n", x << 7); // 10000000 (8)
 
+    // Setting specific bits in a byte:
+    // Position:  0  1  2  3  4  5  6  7
+    // Bit:      [1][0][1][1][0][0][0][0]
+    // Shift:     7  6  5  4  3  2  1  0
+    unsigned char byte = 0;
+
+    // Set bit 0:
+    byte |= (1 << 7); // 00000000 | 10000000 = 10000000
+    // Set bit 2:
+    byte |= (1 << 5); // 10000000 | 00100000 = 10100000
+    // Set bit 3:
+    byte |= (1 << 4); // 10100000 | 00100000 = 10110000
+
     return 0;
 }
