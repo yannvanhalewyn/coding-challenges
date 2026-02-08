@@ -1,6 +1,8 @@
 name := huffman
 output := $(name)
 
+build: $(output)
+
 run: $(output)
 	./$< $(args)
 

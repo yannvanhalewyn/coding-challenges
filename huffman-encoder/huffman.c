@@ -1,3 +1,4 @@
+#include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -175,11 +176,7 @@ void encode_file(HuffmanCode encoding_table[ENCODING_TABLE_SIZE], FILE *input_fi
     int c;
     while ((c = fgetc(input_file)) != EOF) {
         HuffmanCode huffman_code = encoding_table[c];
-
-        printf("Writing: %c (%s)\n", c, huffman_code.code);
         write_code(&writer, huffman_code.code);
-        // printf("Char: %c, Code: %s\n", c, huffman_code.code);
-        // printf("%lu", sizeof(huffman_code.code));
     }
     flush_bits(&writer);
 }
@@ -187,7 +184,7 @@ void encode_file(HuffmanCode encoding_table[ENCODING_TABLE_SIZE], FILE *input_fi
 // Processing File
 ////////////////////////////////////////////////////////////////////////////////
 
-bool process_file(const char *input_filename, const char *output_filename) {
+bool encode(const char *input_filename, const char *output_filename) {
     // Computing Hufman Trees and prefix tables
     FILE *file = fopen(input_filename, "r");
 
@@ -214,7 +211,12 @@ bool process_file(const char *input_filename, const char *output_filename) {
     char code_buffer[ENCODING_TABLE_SIZE];
     build_encoding_table(tree, code_buffer, 0, encoding_table);
 
-    printf("Code for 'e': %s (length: %d)\n", encoding_table['e'].code, encoding_table['e'].exists);
+    // Preview Encoding Table
+    printf("Code for 'e': %s\n", encoding_table['e'].code);
+    printf("Code for 'a': %s\n", encoding_table['a'].code);
+    printf("Code for 't': %s\n", encoding_table['t'].code);
+    printf("Code for 'h': %s\n", encoding_table['h'].code);
+    printf("Code for 'q': %s\n", encoding_table['q'].code);
 
     // Encode File
     FILE *input_file = fopen(input_filename, "r");
@@ -226,15 +228,67 @@ bool process_file(const char *input_filename, const char *output_filename) {
     return true;
 }
 
-int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <filename>\n", argv[0]);
-        return 1;
+// Options parsing
+////////////////////////////////////////////////////////////////////////////////
+
+typedef struct {
+    char *command;
+    char *input_filename;
+    char *output_filename;
+} Options;
+
+Options parse_options(int argc, char *argv[]) {
+    char *command = NULL;
+    char *input_filename = NULL;
+    char *output_filename = NULL;
+
+    if (argc < 3) {
+        fprintf(stderr, "Usage: %s <command> <input_file> -o <output_file>", argv[0]);
+        exit(1);
     }
-    char* filename = argv[1];
-    char output_filename[256];
-    sprintf(output_filename, "%s.encoded", filename);
-    process_file(filename, output_filename);
+
+    command = argv[1];
+    input_filename = argv[2];
+
+    // Look for -o flag
+    for (int i = 3; i < argc - 1; i++) {
+        if (strcmp(argv[i], "-o") == 0) {
+            output_filename = argv[i + 1];
+            break;
+        }
+    }
+
+    if (output_filename == NULL) {
+        fprintf(stderr, "No output option provided. Usage: %s <command> <input_file> -o <output_file>", argv[0]);
+        exit(1);
+    }
+
+    Options options = { command, input_filename, output_filename };
+    return options;
+}
+
+void print_usage(const char *program_name) {
+    printf("Usage: %s <command> <input_file> [options]\n", program_name);
+    printf("\nCommands:\n");
+    printf("  encode    Encode a file using Huffman compression\n");
+    printf("  decode    Decode a Huffman-encoded file\n");
+    printf("\nOptions:\n");
+    printf("  -o, --output FILE    Output file (default: <input>.encoded/.decoded)\n");
+    printf("  -h, --help           Show this help message\n");
+    printf("  -v, --verbose        Verbose output\n");
+    printf("\nExamples:\n");
+    printf("  %s encode test.txt\n", program_name);
+    printf("  %s encode test.txt -o compressed.huf\n", program_name);
+    printf("  %s decode test.txt.encoded -o restored.txt\n", program_name);
+}
+
+int main(int argc, char *argv[]) {
+    Options opts = parse_options(argc, argv);
+    if (strcmp(opts.command, "encode") == 0) {
+        encode(opts.input_filename, opts.output_filename);
+    } else if (strcmp(opts.command, "decode")) {
+        printf("Decode");
+    }
 
     return 0;
 }
