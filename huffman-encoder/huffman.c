@@ -132,6 +132,52 @@ void build_encoding_table(
 ////////////////////////////////////////////////////////////////////////////////
 // Encoding File
 
+// Writing Frequenties Header
+typedef struct {
+    size_t size;
+    int num_unique_chars;
+} FileHeader;
+
+typedef struct {
+    unsigned char character;
+    unsigned int frequency;
+} FrequencyEntry;
+
+void write_uint32(FILE *file, unsigned int value) {
+    fputc((value >> 24) & 0xFF, file);
+    fputc((value >> 16) & 0xFF, file);
+    fputc((value >> 8) & 0xFF, file);
+    fputc(value & 0xFF, file);
+}
+
+unsigned int read_uint32(FILE *file) {
+    unsigned int value = 0;
+    value |= (fgetc(file) << 24);
+    value |= (fgetc(file) << 16);
+    value |= (fgetc(file) << 8);
+    value |= fgetc(file);
+    return value;
+}
+
+void write_header(FILE *output_file, unsigned int freq[], size_t freq_size) {
+    write_uint32(output_file, 0x48554646); // "HUFF" in ASCII
+    unsigned int num_unique = 0;
+    for (int i = 0; i < freq_size; i++) {
+        if (freq[i] > 0) {
+            num_unique++;
+        }
+    }
+
+    write_uint32(output_file, num_unique);
+
+    for (int i = 0; i < ENCODING_TABLE_SIZE; i++) {
+        if (freq[i] > 0) {
+            fputc((unsigned char)i, output_file); // 1 byte for character
+            write_uint32(output_file, freq[i]);   // 4 bytes of frequency
+        }
+    }
+}
+
 typedef struct {
     unsigned char current_byte;
     int bits_filled;
@@ -169,10 +215,11 @@ void write_code(BitWriter *writer, const char *code_string) {
     }
 }
 
-void encode_file(HuffmanCode encoding_table[ENCODING_TABLE_SIZE], FILE *input_file, FILE *output_file) {
-    BitWriter writer = { 0, 0, output_file };
-
+void encode_file(HuffmanCode encoding_table[ENCODING_TABLE_SIZE], unsigned int freq[], size_t freq_size, FILE *input_file, FILE *output_file) {
     printf("Encoding File...\n");
+    write_header(output_file, freq, freq_size);
+
+    BitWriter writer = { 0, 0, output_file };
     int c;
     while ((c = fgetc(input_file)) != EOF) {
         HuffmanCode huffman_code = encoding_table[c];
