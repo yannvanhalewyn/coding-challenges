@@ -29,10 +29,10 @@ It will create a `./huffman` binary. You can run this using arguments:
 In dev it's useful to have a repeatable make command. You can specify args= to the make command like so:
 
 ```sh
-make args="encode test.txt -o test.txt.encoded"
-make args="decode test.txt.huffman -o test.txt.decoded"
+make run args="encode test.txt -o test.txt.encoded"
+make run args="decode test.txt.encoded -o test.txt.decoded"
 ```
 
 # Notes
 
-Since this implementation is for learning purposes, no further improvements have been made to the algorithm. Some issues currently are that smaller files get larger because of the header.
+Since this implementation is for learning purposes, no further improvements have been made to the algorithm, such as improve the storage efficiency of the header. Smaller files get larger because of the header size, and more would be ways to improve this program.
