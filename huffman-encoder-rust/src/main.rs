@@ -1,4 +1,6 @@
 use std::process::exit;
+use std::fs::File;
+use std::io::{BufReader, Read};
 
 struct Options {
     command: String,
@@ -46,6 +48,23 @@ fn print_usage(program_name: &str) {
     println!("  {} decode test.txt.encoded -o restored.txt", program_name);
 }
 
+fn encode(opts: &Options) {
+    let input_file = File::open(&opts.input_filename).expect("Failed to open file");
+    let mut reader = BufReader::new(input_file);
+    let mut buffer = [0; 1]; // 1-byte buffer
+
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) => break, // EOF
+            Ok(_) => {
+                let byte = buffer[0];
+                println!("Read byte: {}", byte);
+            },
+            Err(e) => panic!("Error reading: {}", e),
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -58,7 +77,7 @@ fn main() {
     } else {
         let opts = parse_args(&args);
         match opts.command.as_str() {
-            "encode" => println!("Encoding {} to {:?}", opts.input_filename, opts.output_filename),
+            "encode" => encode(&opts),
             "decode" => println!("Decoding {} to {:?}", opts.input_filename, opts.output_filename),
             _ => {
                 eprintln!("Error: Unknown command '{}'", opts.command);
