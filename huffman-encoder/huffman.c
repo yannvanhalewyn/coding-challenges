@@ -129,8 +129,11 @@ void build_encoding_table(
     }
 }
 
+// Encoding File Header
 ////////////////////////////////////////////////////////////////////////////////
-// Encoding File
+
+// "HUFF" in ASCII
+#define HUFF 0x48554646
 
 // Writing Frequenties Header
 typedef struct {
@@ -160,7 +163,7 @@ unsigned int read_uint32(FILE *file) {
 }
 
 void write_header(FILE *output_file, unsigned int freq[], size_t freq_size) {
-    write_uint32(output_file, 0x48554646); // "HUFF" in ASCII
+    write_uint32(output_file, HUFF);
     unsigned int num_unique = 0;
     for (int i = 0; i < freq_size; i++) {
         if (freq[i] > 0) {
@@ -177,6 +180,26 @@ void write_header(FILE *output_file, unsigned int freq[], size_t freq_size) {
         }
     }
 }
+
+bool read_header(FILE *input_file, unsigned int freq[], size_t freq_size) {
+    unsigned int encoding_type = read_uint32(input_file);
+    if (encoding_type != HUFF) {
+        return false;
+    }
+
+    unsigned int num_unique = read_uint32(input_file);
+    memset(freq, 0, freq_size * sizeof(unsigned int));
+
+    for (unsigned int i = 0; i < num_unique; i++) {
+        unsigned char character = fgetc(input_file);
+        freq[character] = read_uint32(input_file);
+    }
+
+    return true;
+}
+
+// Encoding file body
+////////////////////////////////////////////////////////////////////////////////
 
 typedef struct {
     unsigned char current_byte;
@@ -268,11 +291,45 @@ bool encode(const char *input_filename, const char *output_filename) {
     // Encode File
     FILE *input_file = fopen(input_filename, "r");
     FILE *output_file = fopen(output_filename, "w");
-    encode_file(encoding_table, input_file, output_file);
+    encode_file(encoding_table, freq, ENCODING_TABLE_SIZE, input_file, output_file);
     fclose(input_file);
     fclose(output_file);
 
     return true;
+}
+
+void decode(const char *input_filename, const char *output_filename) {
+    FILE *input_file = fopen(input_filename, "r");
+    if (input_file == NULL) {
+        fprintf(stderr, "Error: Unknown file %s\n", input_filename);
+        exit(1);
+    }
+
+    unsigned int freq[ENCODING_TABLE_SIZE];
+    bool success = read_header(input_file, freq, ENCODING_TABLE_SIZE);
+    if (!success) {
+        fprintf(stderr, "Error: Invalid file format\n");
+        exit(1);
+    }
+
+    // Build Hoffman Tree
+    HuffmanNode* tree = build_huffman_tree(freq, ENCODING_TABLE_SIZE);
+
+    // Build Encoding Table
+    HuffmanCode encoding_table[ENCODING_TABLE_SIZE] = {0};
+    char code_buffer[ENCODING_TABLE_SIZE];
+    build_encoding_table(tree, code_buffer, 0, encoding_table);
+
+    // Decode contents of file
+    FILE *output_file = fopen(output_filename, "w");
+
+    BitWriter writer = { 0, 0, output_file };
+    int c;
+    while ((c = fgetc(input_file)) != EOF) {
+        HuffmanCode huffman_code = encoding_table[c];
+        write_code(&writer, huffman_code.code);
+    }
+    flush_bits(&writer);
 }
 
 // Options parsing
@@ -333,8 +390,10 @@ int main(int argc, char *argv[]) {
     Options opts = parse_options(argc, argv);
     if (strcmp(opts.command, "encode") == 0) {
         encode(opts.input_filename, opts.output_filename);
-    } else if (strcmp(opts.command, "decode")) {
-        printf("Decode");
+    } else if (strcmp(opts.command, "decode") == 0) {
+        decode(opts.input_filename, opts.output_filename);
+    } else {
+        fprintf(stderr, "Error: unknown command %s", opts.command);
     }
 
     return 0;
