@@ -114,8 +114,6 @@ void build_encoding_table(
         HuffmanCode *entry = &encoding_table[(unsigned char)node->character];
         strcpy(entry->code, code);
         entry->exists = 1;
-        printf("Character '%c' (byte %d): code = %s\n",
-                node->character, (unsigned char)node->character, code);
         return;
     }
     // Traverse left
@@ -130,18 +128,75 @@ void build_encoding_table(
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Encoding File
+
+typedef struct {
+    unsigned char current_byte;
+    int bits_filled;
+    FILE *output;
+} BitWriter;
+
+void write_bit(BitWriter *writer, int bit) {
+    if (bit) {
+        // Shift 1 to the correct position and OR it in
+        // When bits_filled is 0, sets the leftmost bit to 1
+        // When bits_filled is 7, sets the rightmost bit to 1
+        writer->current_byte |= (1 << (7 - writer->bits_filled));
+    }
+
+    writer->bits_filled++;
+
+    if (writer->bits_filled == 8) {
+        fputc(writer->current_byte, writer->output);
+        writer->current_byte = 0;
+        writer->bits_filled = 0;
+    }
+}
+
+void flush_bits(BitWriter *writer) {
+    if (writer->bits_filled > 0) {
+        fputc(writer->current_byte, writer->output);
+        writer->current_byte = 0;
+        writer->bits_filled = 0;
+    }
+}
+
+void write_code(BitWriter *writer, const char *code_string) {
+    for (int i = 0; code_string[i] != '\0'; i++) {
+        write_bit(writer, code_string[i] == '1');
+    }
+}
+
+void encode_file(HuffmanCode encoding_table[ENCODING_TABLE_SIZE], FILE *input_file, FILE *output_file) {
+    BitWriter writer = { 0, 0, output_file };
+
+    printf("Encoding File...\n");
+    int c;
+    while ((c = fgetc(input_file)) != EOF) {
+        HuffmanCode huffman_code = encoding_table[c];
+
+        printf("Writing: %c (%s)\n", c, huffman_code.code);
+        write_code(&writer, huffman_code.code);
+        // printf("Char: %c, Code: %s\n", c, huffman_code.code);
+        // printf("%lu", sizeof(huffman_code.code));
+    }
+    flush_bits(&writer);
+}
+
 // Processing File
 ////////////////////////////////////////////////////////////////////////////////
 
-bool process_file(const char *filename) {
-    FILE *file = fopen(filename, "r");
+bool process_file(const char *input_filename, const char *output_filename) {
+    // Computing Hufman Trees and prefix tables
+    FILE *file = fopen(input_filename, "r");
 
     if (file == NULL) {
-        fprintf(stderr, "Error: Could not open file '%s'\n", filename);
+        fprintf(stderr, "Error: Could not open file '%s'\n", input_filename);
         return false;
     }
 
-    printf("Processing %s\n", filename);
+    printf("Processing %s\n", input_filename);
 
     unsigned int freq[ENCODING_TABLE_SIZE] = {0};
 
@@ -151,12 +206,22 @@ bool process_file(const char *filename) {
     }
     fclose(file);
 
+    // Build Hoffman Tree
     HuffmanNode* tree = build_huffman_tree(freq, ENCODING_TABLE_SIZE);
+
+    // Build Encoding Table
     HuffmanCode encoding_table[ENCODING_TABLE_SIZE] = {0};
     char code_buffer[ENCODING_TABLE_SIZE];
     build_encoding_table(tree, code_buffer, 0, encoding_table);
 
-    printf("Code for 'l': %s (length: %d)\n", encoding_table['l'].code, encoding_table['l'].exists);
+    printf("Code for 'e': %s (length: %d)\n", encoding_table['e'].code, encoding_table['e'].exists);
+
+    // Encode File
+    FILE *input_file = fopen(input_filename, "r");
+    FILE *output_file = fopen(output_filename, "w");
+    encode_file(encoding_table, input_file, output_file);
+    fclose(input_file);
+    fclose(output_file);
 
     return true;
 }
@@ -167,7 +232,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     char* filename = argv[1];
-    process_file(filename);
+    char output_filename[256];
+    sprintf(output_filename, "%s.encoded", filename);
+    process_file(filename, output_filename);
 
     return 0;
 }
