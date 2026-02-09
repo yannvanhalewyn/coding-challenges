@@ -3,6 +3,9 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::collections::HashMap;
 
+// Option Parsing
+////////////////////////////////////////////////////////////////////////////////
+
 struct Options {
     command: String,
     input_filename: String,
@@ -49,6 +52,9 @@ fn print_usage(program_name: &str) {
     println!("  {} decode test.txt.encoded -o restored.txt", program_name);
 }
 
+// Frequency table
+////////////////////////////////////////////////////////////////////////////////
+
 // Returns a map of ascii char to count (uint32)
 fn calculate_frequencies(input_file: File) -> HashMap<u8, u32> {
     let mut frequencies = HashMap::new();
@@ -70,10 +76,64 @@ fn calculate_frequencies(input_file: File) -> HashMap<u8, u32> {
     frequencies
 }
 
+// Building Hufman tables
+////////////////////////////////////////////////////////////////////////////////
+
+enum HuffmanNode {
+    Leaf {
+        weight: u32,
+        character: u8,
+    },
+    Internal {
+        weight: u32,
+        left: Box<HuffmanNode>,
+        right: Box<HuffmanNode>,
+    }
+}
+
+impl HuffmanNode {
+    pub fn new_leaf(character: u8, weight: u32) -> Self {
+        HuffmanNode::Leaf { weight, character }
+    }
+
+    pub fn new_parent(left: Box<HuffmanNode>, right: Box<HuffmanNode>) -> Self {
+        let weight = left.weight() + right.weight();
+        HuffmanNode::Internal { weight, left, right, }
+    }
+
+    pub fn weight(&self) -> u32 {
+        match self {
+            HuffmanNode::Leaf { weight, .. } => *weight,
+            HuffmanNode::Internal { weight, .. } => *weight,
+        }
+    }
+}
+
+fn build_huffman_tree(frequencies: &HashMap<u8, u32>) -> Box<HuffmanNode> {
+    let mut nodes: Vec<Box<HuffmanNode>> = frequencies
+        .iter()
+        .filter(|(_, &count) | count > 0)
+        .map(|(&byte, &count)| Box::new(HuffmanNode::new_leaf(byte, count)))
+        .collect();
+
+    // Continually sort and join the two lowest nodes. Could be made more
+    // efficient by using a BinaryHeap
+    while nodes.len() > 1 {
+        nodes.sort_by_key(|a| a.weight());
+        let left = nodes.remove(0);
+        let right = nodes.remove(0);
+        let parent = Box::new(HuffmanNode::new_parent(left, right));
+        nodes.push(parent);
+    }
+    nodes.pop().unwrap()
+}
+
 fn encode(opts: &Options) {
     let input_file = File::open(&opts.input_filename).expect("Failed to open file");
     let frequencies = calculate_frequencies(input_file);
+    let tree = build_huffman_tree(&frequencies);
     println!("Frequency: {}", frequencies.get(&b'l').unwrap_or(&0));
+    println!("Tree Root Weight: {}", &tree.weight());
 }
 
 fn main() {
