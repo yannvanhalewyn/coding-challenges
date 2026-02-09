@@ -192,10 +192,13 @@ struct Header {
     frequencies: FrequencyTable
 }
 
-fn encode_header(file: &mut File, frequencies: &FrequencyTable) -> IoResult<()> {
+fn encode_provisionary_header(file: &mut File, frequencies: &FrequencyTable) -> IoResult<()> {
     file.write_all(b"HUFF")?;
     // Write unique number of chars in frequency table
     file.write_all(&(frequencies.len() as u32).to_le_bytes())?;
+    // TMP print pos
+    let pos = file.stream_position()?;
+    println!("Pos: {}", pos);
     // Write 1 placeholder byte for the padding to be written later
     file.write_all(&0u8.to_le_bytes())?;
 
@@ -204,6 +207,12 @@ fn encode_header(file: &mut File, frequencies: &FrequencyTable) -> IoResult<()> 
         file.write_all(&[*character])?;
         file.write_all(&frequency.to_le_bytes())?;
     }
+    Ok(())
+}
+
+fn encode_header_padding_bits(file: &mut File, padding_bits: u8) -> IoResult<()> {
+    file.seek(SeekFrom::Start(8))?;
+    file.write_all(&padding_bits.to_le_bytes())?;
     Ok(())
 }
 
@@ -276,14 +285,16 @@ impl<'a> BitWriter<'a> {
         Ok(())
     }
 
-    fn flush(&mut self) -> IoResult<()> {
+    // Returns the number of padded bits that were flushed
+    fn flush(&mut self) -> IoResult<u8> {
+        let padding_bits = 8 - self.bits_filled;
         if self.bits_filled > 0 {
             self.output_file.write_all(&[self.current_byte])?;
             self.current_byte = 0;
             self.bits_filled = 0;
         }
         self.output_file.sync_all()?;
-        Ok(())
+        Ok(padding_bits)
     }
 }
 
@@ -294,7 +305,7 @@ fn encode_file(
     encoding_table: &EncodingTable
 ) -> IoResult<()> {
 
-    encode_header(output_file, frequencies)?;
+    encode_provisionary_header(output_file, frequencies)?;
 
     input_file.seek(SeekFrom::Start(0))?;
     let mut reader = BufReader::new(input_file);
@@ -321,8 +332,10 @@ fn encode_file(
             Err(e) => panic!("Error reading: {}", e),
         }
     }
-    bit_writer.flush()?;
 
+    let padding_bits = bit_writer.flush()?;
+    println!("Padding bits: {}", padding_bits);
+    encode_header_padding_bits(output_file, padding_bits)?;
     Ok(())
 }
 
