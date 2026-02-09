@@ -1,6 +1,6 @@
 use std::process::exit;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Write, Seek, SeekFrom, Result as IoResult};
 use std::collections::HashMap;
 
 // Option Parsing
@@ -68,7 +68,6 @@ fn calculate_frequencies(input_file: File) -> HashMap<u8, u32> {
             Ok(_) => {
                 let byte = buffer[0];
                 *frequencies.entry(byte).or_insert(0) += 1;
-                println!("Read byte: {}", byte);
             },
             Err(e) => panic!("Error reading: {}", e),
         }
@@ -149,6 +148,10 @@ fn traverse(node: &HuffmanNode, code: Code, table: &mut HashMap<u8, Code>) {
     }
 }
 
+// Encoding Table
+////////////////////////////////////////////////////////////////////////////////
+
+
 // Builds a map from character to binary code, so 'a'-> 10
 fn build_encoding_table(tree: &Box<HuffmanNode>) -> HashMap<u8, Code> {
     let mut table = HashMap::new();
@@ -156,7 +159,25 @@ fn build_encoding_table(tree: &Box<HuffmanNode>) -> HashMap<u8, Code> {
     table
 }
 
-fn encode(opts: &Options) {
+// Codec
+////////////////////////////////////////////////////////////////////////////////
+
+fn encode_header(file: &mut File, frequencies: &HashMap<u8, u32>) -> IoResult<()> {
+    file.write_all(b"HUFF")?;
+    // Write unique number of chars in frequency table
+    file.write_all(&(frequencies.len() as u32).to_le_bytes())?;
+    // Write 1 placeholder byte for the padding to be written later
+    file.write_all(&0u8.to_le_bytes())?;
+
+    // Write all the entries of the frequencies table
+    for (character, frequency) in frequencies {
+        file.write_all(&[*character])?;
+        file.write_all(&frequency.to_le_bytes())?;
+    }
+    Ok(())
+}
+
+fn encode(opts: &Options) -> IoResult<()> {
     let input_file = File::open(&opts.input_filename).expect("Failed to open file");
     let frequencies = calculate_frequencies(input_file);
     let tree = build_huffman_tree(&frequencies);
@@ -166,6 +187,12 @@ fn encode(opts: &Options) {
     println!("Tree Root Weight: {}", &tree.weight());
     println!("Encoding Table 'e': {:#b}", encoding_table.get(&b'e').unwrap().bits);
     println!("Encoding Table 'l': {:#b}", encoding_table.get(&b'l').unwrap().bits);
+
+    let mut output_file = File::create(&opts.output_filename)?;
+    encode_header(&mut output_file, &frequencies)?;
+
+    output_file.sync_all()?;
+    Ok(())
 }
 
 fn main() {
@@ -180,7 +207,7 @@ fn main() {
     } else {
         let opts = parse_args(&args);
         match opts.command.as_str() {
-            "encode" => encode(&opts),
+            "encode" => { let _ = encode(&opts); },
             "decode" => println!("Decoding {} to {:?}", opts.input_filename, opts.output_filename),
             _ => {
                 eprintln!("Error: Unknown command '{}'", opts.command);
