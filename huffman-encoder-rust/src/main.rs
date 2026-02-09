@@ -84,7 +84,7 @@ enum HuffmanNode {
         weight: u32,
         character: u8,
     },
-    Internal {
+    Parent {
         weight: u32,
         left: Box<HuffmanNode>,
         right: Box<HuffmanNode>,
@@ -98,13 +98,13 @@ impl HuffmanNode {
 
     pub fn new_parent(left: Box<HuffmanNode>, right: Box<HuffmanNode>) -> Self {
         let weight = left.weight() + right.weight();
-        HuffmanNode::Internal { weight, left, right, }
+        HuffmanNode::Parent { weight, left, right, }
     }
 
     pub fn weight(&self) -> u32 {
         match self {
             HuffmanNode::Leaf { weight, .. } => *weight,
-            HuffmanNode::Internal { weight, .. } => *weight,
+            HuffmanNode::Parent { weight, .. } => *weight,
         }
     }
 }
@@ -128,12 +128,44 @@ fn build_huffman_tree(frequencies: &HashMap<u8, u32>) -> Box<HuffmanNode> {
     nodes.pop().unwrap()
 }
 
+struct Code {
+    bits: u8, // Store up to 64 bits
+    length: u8,
+}
+
+fn traverse(node: &HuffmanNode, code: Code, table: &mut HashMap<u8, Code>) {
+    match node {
+        HuffmanNode::Leaf { character, .. } => {
+            let code_record = Code { bits: code.bits, length: code.length };
+            table.insert(*character, code_record);
+        }
+        HuffmanNode::Parent { left, right, .. } => {
+            traverse(left, Code { bits: code.bits, length: code.length + 1}, table);
+
+            // Flip the next bit to '1'
+            let right_bits = code.bits | 1 << (7 - code.length);
+            traverse(right, Code { bits: right_bits, length: code.length + 1}, table);
+        }
+    }
+}
+
+// Builds a map from character to binary code, so 'a'-> 10
+fn build_encoding_table(tree: &Box<HuffmanNode>) -> HashMap<u8, Code> {
+    let mut table = HashMap::new();
+    traverse(tree.as_ref(), Code { bits: 0, length: 0 }, &mut table);
+    table
+}
+
 fn encode(opts: &Options) {
     let input_file = File::open(&opts.input_filename).expect("Failed to open file");
     let frequencies = calculate_frequencies(input_file);
     let tree = build_huffman_tree(&frequencies);
-    println!("Frequency: {}", frequencies.get(&b'l').unwrap_or(&0));
+    let encoding_table = build_encoding_table(&tree);
+    println!("Frequency 'e': {}", frequencies.get(&b'e').unwrap_or(&0));
+    println!("Frequency 'l': {}", frequencies.get(&b'l').unwrap_or(&0));
     println!("Tree Root Weight: {}", &tree.weight());
+    println!("Encoding Table 'e': {:#b}", encoding_table.get(&b'e').unwrap().bits);
+    println!("Encoding Table 'l': {:#b}", encoding_table.get(&b'l').unwrap().bits);
 }
 
 fn main() {
