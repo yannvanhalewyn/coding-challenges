@@ -56,7 +56,7 @@ fn print_usage(program_name: &str) {
 ////////////////////////////////////////////////////////////////////////////////
 
 // Returns a map of ascii char to count (uint32)
-fn calculate_frequencies(input_file: File) -> HashMap<u8, u32> {
+fn calculate_frequencies(input_file: &File) -> HashMap<u8, u32> {
     let mut frequencies = HashMap::new();
 
     let mut reader = BufReader::new(input_file);
@@ -177,21 +177,117 @@ fn encode_header(file: &mut File, frequencies: &HashMap<u8, u32>) -> IoResult<()
     Ok(())
 }
 
+struct BitWriter<'a> {
+    current_byte: u8,
+    bits_filled: u8,
+    output_file: &'a mut File,
+    total_bits: u32,
+}
+
+impl<'a> BitWriter<'a> {
+    fn new(file: &'a mut File) -> IoResult<Self> {
+        Ok(BitWriter {
+            current_byte: 0,
+            bits_filled: 0,
+            output_file: file,
+            total_bits: 0,
+        })
+    }
+
+    fn write_bit(&mut self, bit: bool) -> IoResult<()> {
+        if bit {
+            // Flip the bit at the next position
+            self.current_byte |= 1 << (7 - self.bits_filled);
+        }
+        self.bits_filled += 1;
+        self.total_bits += 1;
+
+        if self.bits_filled == 8 {
+            self.output_file.write_all(&[self.current_byte])?;
+            self.current_byte = 0;
+            self.bits_filled = 0;
+        }
+        Ok(())
+    }
+
+    fn write_bits(&mut self, bits: u8, length: u8) -> IoResult<()> {
+        for i in 0..length {
+            // i = 0
+            // bits = 0b11010000
+            // length = 4
+            // bits >> (4 - 1 - 0) -> bits >> 3 = 0b00011010
+            let bit = (bits >> (length - 1 - i)) & 1 == 1;
+            self.write_bit(bit)?;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> IoResult<()> {
+        if self.bits_filled > 0 {
+            self.output_file.write_all(&[self.current_byte])?;
+            self.current_byte = 0;
+            self.bits_filled = 0;
+        }
+        self.output_file.sync_all()?;
+        Ok(())
+    }
+}
+
+fn encode_file(
+    input_file: &mut File, output_file: &mut File,
+    frequencies: &HashMap<u8, u32>, encoding_table: &HashMap<u8, Code>
+) -> IoResult<()> {
+
+    encode_header(output_file, frequencies)?;
+
+    input_file.seek(SeekFrom::Start(0))?;
+    let mut reader = BufReader::new(input_file);
+    let mut bit_writer = BitWriter::new(output_file)?;
+    let mut buffer = [0u8; 1]; // 1-byte buffer;
+
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) => break, // EOF,
+            Ok(_) => {
+                let byte = buffer[0];
+                println!("Byte {:#b}", byte);
+                match encoding_table.get(&byte) {
+                    Some(code) => {
+                        println!("Code: {:?}, count: {}", code.bits, code.length);
+                        bit_writer.write_bits(code.bits, code.length)?;
+                    },
+                    None => {
+                        panic!("Character not in encoding table: {}", byte);
+                    }
+                }
+            },
+            Err(e) => panic!("Error reading: {}", e),
+        }
+    }
+    bit_writer.flush()?;
+
+    Ok(())
+}
+
 fn encode(opts: &Options) -> IoResult<()> {
-    let input_file = File::open(&opts.input_filename).expect("Failed to open file");
-    let frequencies = calculate_frequencies(input_file);
+    let mut input_file = File::open(&opts.input_filename).expect("Failed to open file");
+    let frequencies = calculate_frequencies(&input_file);
     let tree = build_huffman_tree(&frequencies);
     let encoding_table = build_encoding_table(&tree);
-    println!("Frequency 'e': {}", frequencies.get(&b'e').unwrap_or(&0));
-    println!("Frequency 'l': {}", frequencies.get(&b'l').unwrap_or(&0));
-    println!("Tree Root Weight: {}", &tree.weight());
-    println!("Encoding Table 'e': {:#b}", encoding_table.get(&b'e').unwrap().bits);
-    println!("Encoding Table 'l': {:#b}", encoding_table.get(&b'l').unwrap().bits);
+
+    for (character, frequency) in &frequencies {
+        println!("Char '{}': freq - {}, encoding - {:#b}",
+            *character as char, frequency, encoding_table.get(character).unwrap().bits
+        );
+    }
 
     let mut output_file = File::create(&opts.output_filename)?;
-    encode_header(&mut output_file, &frequencies)?;
 
-    output_file.sync_all()?;
+    match encode_file(&mut input_file, &mut output_file, &frequencies, &encoding_table) {
+        Ok(()) => println!("Encoding successful"),
+        Err(e) => eprintln!("Encoding failed: {}", e),
+    }
+
     Ok(())
 }
 
