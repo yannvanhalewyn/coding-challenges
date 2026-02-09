@@ -1,7 +1,8 @@
-use std::process::exit;
+use std::collections::HashMap;
+use std::fmt;
 use std::fs::File;
 use std::io::{BufReader, Read, Write, Seek, SeekFrom, Result as IoResult};
-use std::collections::HashMap;
+use std::process::exit;
 
 // Option Parsing
 ////////////////////////////////////////////////////////////////////////////////
@@ -12,7 +13,7 @@ struct Options {
     output_filename: String,
 }
 
-fn parse_args(args: &Vec<String>) -> Options {
+fn parse_args(args: &[String]) -> Options {
     let mut output = None;
 
     for i in 3..args.len()  {
@@ -108,6 +109,19 @@ impl HuffmanNode {
     }
 }
 
+impl fmt::Display for HuffmanNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HuffmanNode::Leaf { character, .. } => {
+                write!(f, "'{}'", *character as char)
+            },
+            HuffmanNode::Parent { left, right, .. } => {
+                write!(f, "(parent of {} and {})", left, right)
+            }
+        }
+    }
+}
+
 fn build_huffman_tree(frequencies: &HashMap<u8, u32>) -> Box<HuffmanNode> {
     let mut nodes: Vec<Box<HuffmanNode>> = frequencies
         .iter()
@@ -128,7 +142,7 @@ fn build_huffman_tree(frequencies: &HashMap<u8, u32>) -> Box<HuffmanNode> {
 }
 
 struct Code {
-    bits: u8, // Store up to 64 bits
+    bits: u8,
     length: u8,
 }
 
@@ -153,9 +167,9 @@ fn traverse(node: &HuffmanNode, code: Code, table: &mut HashMap<u8, Code>) {
 
 
 // Builds a map from character to binary code, so 'a'-> 10
-fn build_encoding_table(tree: &Box<HuffmanNode>) -> HashMap<u8, Code> {
+fn build_encoding_table(tree: &HuffmanNode) -> HashMap<u8, Code> {
     let mut table = HashMap::new();
-    traverse(tree.as_ref(), Code { bits: 0, length: 0 }, &mut table);
+    traverse(tree, Code { bits: 0, length: 0 }, &mut table);
     table
 }
 
@@ -269,20 +283,25 @@ fn encode_file(
     Ok(())
 }
 
+fn print_encoding_table(encoding_table: &HashMap<u8, Code>, frequencies: &HashMap<u8, u32>) {
+    for (character, frequency) in frequencies {
+        let code = encoding_table.get(character).unwrap();
+        println!("Char '{} - freq: {}, encoding: {:#b}, length: {}",
+            *character as char, frequency, code.bits, code.length
+        );
+    }
+}
+
 fn encode(opts: &Options) -> IoResult<()> {
+    // Compute frequencies, huffman tree and encoding table
     let mut input_file = File::open(&opts.input_filename).expect("Failed to open file");
     let frequencies = calculate_frequencies(&input_file);
     let tree = build_huffman_tree(&frequencies);
     let encoding_table = build_encoding_table(&tree);
+    print_encoding_table(&encoding_table, &frequencies);
 
-    for (character, frequency) in &frequencies {
-        println!("Char '{}': freq - {}, encoding - {:#b}",
-            *character as char, frequency, encoding_table.get(character).unwrap().bits
-        );
-    }
-
+    // Encode the file
     let mut output_file = File::create(&opts.output_filename)?;
-
     match encode_file(&mut input_file, &mut output_file, &frequencies, &encoding_table) {
         Ok(()) => println!("Encoding successful"),
         Err(e) => eprintln!("Encoding failed: {}", e),
