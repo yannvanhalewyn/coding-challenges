@@ -189,13 +189,13 @@ fn build_encoding_table(tree: &HuffmanNode) -> EncodingTable {
 struct Header {
     num_entries: u32,
     padding_bits: u8,
-    frequencies: FrequencyTable
+    encoding_table: EncodingTable
 }
 
-fn encode_provisionary_header(file: &mut File, frequencies: &FrequencyTable) -> IoResult<()> {
-    file.write_all(b"HUFF")?;
+fn encode_provisionary_header(file: &mut File, encoding_table: &EncodingTable) -> IoResult<()> {
+    file.write_all(b"HRST")?; // Huffman Rust
     // Write unique number of chars in frequency table
-    file.write_all(&(frequencies.len() as u32).to_le_bytes())?;
+    file.write_all(&(encoding_table.len() as u32).to_le_bytes())?;
     // TMP print pos
     let pos = file.stream_position()?;
     println!("Pos: {}", pos);
@@ -203,9 +203,10 @@ fn encode_provisionary_header(file: &mut File, frequencies: &FrequencyTable) -> 
     file.write_all(&0u8.to_le_bytes())?;
 
     // Write all the entries of the frequencies table
-    for (character, frequency) in frequencies {
+    for (character, code) in encoding_table {
         file.write_all(&[*character])?;
-        file.write_all(&frequency.to_le_bytes())?;
+        file.write_all(&[code.bits])?;
+        file.write_all(&[code.length])?;
     }
     Ok(())
 }
@@ -216,14 +217,12 @@ fn encode_header_padding_bits(file: &mut File, padding_bits: u8) -> IoResult<()>
     Ok(())
 }
 
-fn decode_header(file: &mut File) -> IoResult<Header> {
-    let mut reader = BufReader::new(file);
+fn decode_header(reader: &mut BufReader<File>) -> IoResult<Header> {
     let mut huff_bytes = [0u8; 4];
     reader.read_exact(&mut huff_bytes)?;
-    if huff_bytes != *b"HUFF" {
+    if huff_bytes != *b"HRST" {
         return Err(Error::new(ErrorKind::InvalidData, "Invalid file format"))
     }
-    println!("Header OK!");
 
     let mut num_entries_bytes = [0u8; 4];
     reader.read_exact(&mut num_entries_bytes)?;
@@ -233,8 +232,16 @@ fn decode_header(file: &mut File) -> IoResult<Header> {
     reader.read_exact(&mut padding_bits_buf)?;
     let padding_bits = padding_bits_buf[0];
 
-    let frequencies = HashMap::new();
-    Ok(Header { num_entries, padding_bits, frequencies })
+    let mut encoding_table = HashMap::new();
+    for _i in 0..num_entries {
+        let mut buffer = [0u8;3];
+        reader.read_exact(&mut buffer)?;
+        let char = buffer[0];
+        let bits = buffer[1];
+        let length = buffer[2];
+        encoding_table.insert(char, Code { bits, length });
+    }
+    Ok(Header { num_entries, padding_bits, encoding_table })
 }
 
 struct BitWriter<'a> {
@@ -301,11 +308,10 @@ impl<'a> BitWriter<'a> {
 fn encode_file(
     input_file: &mut File,
     output_file: &mut File,
-    frequencies: &FrequencyTable,
     encoding_table: &EncodingTable
 ) -> IoResult<()> {
 
-    encode_provisionary_header(output_file, frequencies)?;
+    encode_provisionary_header(output_file, encoding_table)?;
 
     input_file.seek(SeekFrom::Start(0))?;
     let mut reader = BufReader::new(input_file);
@@ -339,11 +345,126 @@ fn encode_file(
     Ok(())
 }
 
-fn print_encoding_table(encoding_table: &EncodingTable, frequencies: &FrequencyTable) {
-    for (character, frequency) in frequencies {
-        let code = encoding_table.get(character).unwrap();
-        println!("Char '{}' - freq: {}, encoding: {:#b}, length: {}",
-            *character as char, frequency, code.bits, code.length
+// 'a is about the lifetime of a reference. It says 'this reference is valid for
+// some scope called 'a". This is so the compiler can connect the lifetime of
+// input references with the lifetime of the output reference.
+//
+// Every struct holding a reference needs to declare a lifetime.
+// This says: "BitReader holds a reference, and BitReader cannot outlive the
+// thing it references." Without it, when the reader goes out of scope it would
+// result in a dangling reference in the BitReader.
+//
+// No lifetime is needed if the struct 'owns' the reader (no reference)
+//
+// Mental model: think of 'a as a contract:
+// - &'a T = "I'm borrowing a T, and I promise not to use it after scope 'a ends"
+struct BitReader<'a> {
+    reader: &'a mut BufReader<File>,
+    current_byte: Option<u8>,
+    next_byte: Option<u8>,
+    bit_index: u8,
+    padding_bits: u8,
+}
+
+impl<'a> BitReader<'a> {
+    pub fn new(reader: &'a mut BufReader<File>, padding_bits: u8) -> IoResult<Self> {
+        // Eagerly load first two bytes
+        let current_byte = Self::read_byte(reader)?;
+        println!("NEW Byte: {:?}", current_byte);
+        let next_byte = if current_byte.is_some() {
+            Self::read_byte(reader)?
+        } else {
+            None
+        };
+
+        Ok(BitReader {
+            reader,
+            current_byte,
+            next_byte,
+            bit_index: 0,
+            padding_bits,
+        })
+    }
+
+    fn read_byte(reader: &mut BufReader<File>) -> IoResult<Option<u8>> {
+        let mut buffer = [0u8; 1];
+        match reader.read_exact(&mut buffer) {
+            Ok(()) => Ok(Some(buffer[0])),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
+            Err(e) => Err(e)
+        }
+    }
+
+    fn advance(&mut self) -> IoResult<()> {
+        self.current_byte = self.next_byte;
+        self.next_byte = if self.current_byte.is_some() {
+            Self::read_byte(self.reader)?
+        } else {
+            None
+        };
+        self.bit_index = 0;
+        Ok(())
+    }
+
+    pub fn read_bit(&mut self) -> IoResult<Option<bool>> {
+        let byte = match self.current_byte {
+            Some(byte) => byte,
+            None => return Ok(None), // EOF
+        };
+
+        println!("read_bit - current byte: {:#010b}, bit_index: {}", byte, self.bit_index);
+        let is_last_byte = self.next_byte.is_none();
+        let valid_bits = if is_last_byte { 8 - self.padding_bits } else { 8 };
+
+        if self.bit_index >= valid_bits {
+            return Ok(None);
+        }
+
+        let bit = (byte >> (7 - self.bit_index)) & 1 == 1;
+        self.bit_index += 1;
+
+        if self.bit_index == 8 {
+            self.advance()?;
+        }
+
+        println!("Bit: {}", bit);
+        Ok(Some(bit))
+    }
+}
+
+fn decode_file(reader: &mut BufReader<File>, output_file: &mut File, padding_bits: u8, encoding_table: &EncodingTable) -> IoResult<()> {
+    // (bits, length) -> character
+    let mut decode_table: HashMap<(u8, u8), u8> = HashMap::new();
+
+    for (character, code) in encoding_table {
+        decode_table.insert((code.bits, code.length), *character);
+    }
+
+    let mut bit_reader = BitReader::new(reader, padding_bits)?;
+
+    let mut current_bits = 0u8;
+    let mut current_length = 0u8;
+
+    while let Ok(Some(bit)) = bit_reader.read_bit() {
+        println!("READ BIT, {}", bit);
+        current_bits = (current_bits << 1) | (bit as u8);
+        current_length += 1;
+
+        if let Some(character) = decode_table.get(&(current_bits, current_length)) {
+            println!("Character: {}", character);
+            output_file.write_all(&[*character])?;
+            current_bits = 0;
+            current_length = 0;
+        }
+    }
+
+    Ok(())
+}
+
+fn print_encoding_table(encoding_table: &EncodingTable) {
+    for (character, code) in encoding_table {
+        println!("Char '{}' - encoding: {:#b}, length: {}",
+            *character as char, code.bits, code.length
         );
     }
 }
@@ -354,11 +475,11 @@ fn encode(opts: &Options) -> IoResult<()> {
     let frequencies = calculate_frequencies(&input_file);
     let tree = build_huffman_tree(&frequencies);
     let encoding_table = build_encoding_table(&tree);
-    print_encoding_table(&encoding_table, &frequencies);
+    print_encoding_table(&encoding_table);
 
     // Encode the file
     let mut output_file = File::create(&opts.output_filename)?;
-    match encode_file(&mut input_file, &mut output_file, &frequencies, &encoding_table) {
+    match encode_file(&mut input_file, &mut output_file, &encoding_table) {
         Ok(()) => println!("Encoding successful"),
         Err(e) => eprintln!("Encoding failed: {}", e),
     }
@@ -367,9 +488,16 @@ fn encode(opts: &Options) -> IoResult<()> {
 }
 
 fn decode(opts: &Options) -> IoResult<()> {
-    let mut input_file = File::open(&opts.input_filename).expect("Failed to open file");
-    let header = decode_header(&mut input_file)?;
+    // Decode Header
+    let input_file = File::open(&opts.input_filename).expect("Failed to open file");
+    let mut reader = BufReader::new(input_file);
+    let header = decode_header(&mut reader)?;
     println!("Header - entries: {}, padding: {}", header.num_entries, header.padding_bits);
+    print_encoding_table(&header.encoding_table);
+
+    // Write decoded data to output_file
+    let mut output_file = File::create(&opts.output_filename).expect("Failed to open file");
+    decode_file(&mut reader, &mut output_file, header.padding_bits, &header.encoding_table)?;
     Ok(())
 }
 
