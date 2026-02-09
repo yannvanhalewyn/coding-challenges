@@ -147,15 +147,19 @@ struct Code {
 }
 
 fn traverse(node: &HuffmanNode, code: Code, table: &mut HashMap<u8, Code>) {
+    println!("Traversing {}, {:#010b}:{}", node, code.bits, code.length);
     match node {
         HuffmanNode::Leaf { character, .. } => {
             let code_record = Code { bits: code.bits, length: code.length };
             table.insert(*character, code_record);
         }
         HuffmanNode::Parent { left, right, .. } => {
+            // Left just increments the length, keeping a 0
             traverse(left, Code { bits: code.bits, length: code.length + 1}, table);
-
-            // Flip the next bit to '1'
+            // Flips the next bit to '1'
+            // 1 = 0b00000001
+            // 1 << 7 = 0b10000000
+            // 1 << 6 = 0b01000000 etc..
             let right_bits = code.bits | 1 << (7 - code.length);
             traverse(right, Code { bits: right_bits, length: code.length + 1}, table);
         }
@@ -226,12 +230,15 @@ impl<'a> BitWriter<'a> {
 
     fn write_bits(&mut self, bits: u8, length: u8) -> IoResult<()> {
         for i in 0..length {
-            // i = 0
-            // bits = 0b11010000
-            // length = 4
-            // bits >> (4 - 1 - 0) -> bits >> 3 = 0b00011010
-            let bit = (bits >> (length - 1 - i)) & 1 == 1;
-            self.write_bit(bit)?;
+            // Example:
+            //   bits = 0b11010000 and length = 4
+            // bits >> (7 - i) is about bits in order to be rightmost
+            // bits >> (7 - 0) -> bits >> 7 = 0b00000001 (first bit to rightmost)
+            // bits >> 6 = 0b00000011 (second bit to rightmost)
+            // bits >> 5 = 0b00000110 (etc..)
+            // bits >> 4 = 0b00001101
+            let bit = (bits >> (7 - i)) & 1;
+            self.write_bit(bit == 1)?;
         }
         Ok(())
     }
@@ -264,10 +271,11 @@ fn encode_file(
             Ok(0) => break, // EOF,
             Ok(_) => {
                 let byte = buffer[0];
-                println!("Byte {:#b}", byte);
                 match encoding_table.get(&byte) {
                     Some(code) => {
-                        println!("Code: {:?}, count: {}", code.bits, code.length);
+                        println!("Char '{}', Code: {:#010b}, count: {}",
+                            byte as char, code.bits, code.length
+                        );
                         bit_writer.write_bits(code.bits, code.length)?;
                     },
                     None => {
@@ -286,7 +294,7 @@ fn encode_file(
 fn print_encoding_table(encoding_table: &HashMap<u8, Code>, frequencies: &HashMap<u8, u32>) {
     for (character, frequency) in frequencies {
         let code = encoding_table.get(character).unwrap();
-        println!("Char '{} - freq: {}, encoding: {:#b}, length: {}",
+        println!("Char '{}' - freq: {}, encoding: {:#b}, length: {}",
             *character as char, frequency, code.bits, code.length
         );
     }
