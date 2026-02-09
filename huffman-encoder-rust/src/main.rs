@@ -210,22 +210,22 @@ fn encode_header(file: &mut File, frequencies: &FrequencyTable) -> IoResult<()> 
 fn decode_header(file: &mut File) -> IoResult<Header> {
     let mut reader = BufReader::new(file);
     let mut huff_bytes = [0u8; 4];
-    match reader.read(&mut huff_bytes) {
-        Ok(_) => {
-            let value = u32::from_le_bytes(huff_bytes);
-            if huff_bytes != *b"HUFF" {
-                return Err(Error::new(
-                        ErrorKind::InvalidData,
-                        "Invalid file format"
-                ))
-            }
-            println!("Header OK!");
-            let frequencies = HashMap::new();
-            Ok(Header { num_entries: 0, padding_bits: 0, frequencies })
-        },
-        Err(e) => panic!("Error reading: {}", e),
+    reader.read_exact(&mut huff_bytes)?;
+    if huff_bytes != *b"HUFF" {
+        return Err(Error::new(ErrorKind::InvalidData, "Invalid file format"))
     }
-    //Header { num_entries, padding_bits, frequencies }
+    println!("Header OK!");
+
+    let mut num_entries_bytes = [0u8; 4];
+    reader.read_exact(&mut num_entries_bytes)?;
+    let num_entries = u32::from_le_bytes(num_entries_bytes);
+
+    let mut padding_bits_buf = [0u8; 1];
+    reader.read_exact(&mut padding_bits_buf)?;
+    let padding_bits = padding_bits_buf[0];
+
+    let frequencies = HashMap::new();
+    Ok(Header { num_entries, padding_bits, frequencies })
 }
 
 struct BitWriter<'a> {
