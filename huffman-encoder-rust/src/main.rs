@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::fs::File;
-use std::io::{BufReader, Read, Write, Seek, SeekFrom, Result as IoResult};
+use std::io::{
+    BufReader, Read, Result as IoResult, Error, ErrorKind,
+    Seek, SeekFrom, Write
+};
 use std::process::exit;
 
 // Option Parsing
@@ -56,8 +59,10 @@ fn print_usage(program_name: &str) {
 // Frequency table
 ////////////////////////////////////////////////////////////////////////////////
 
+type FrequencyTable = HashMap<u8, u32>;
+
 // Returns a map of ascii char to count (uint32)
-fn calculate_frequencies(input_file: &File) -> HashMap<u8, u32> {
+fn calculate_frequencies(input_file: &File) -> FrequencyTable {
     let mut frequencies = HashMap::new();
 
     let mut reader = BufReader::new(input_file);
@@ -122,7 +127,7 @@ impl fmt::Display for HuffmanNode {
     }
 }
 
-fn build_huffman_tree(frequencies: &HashMap<u8, u32>) -> Box<HuffmanNode> {
+fn build_huffman_tree(frequencies: &FrequencyTable) -> Box<HuffmanNode> {
     let mut nodes: Vec<Box<HuffmanNode>> = frequencies
         .iter()
         .filter(|(_, &count) | count > 0)
@@ -146,22 +151,24 @@ struct Code {
     length: u8,
 }
 
-fn traverse(node: &HuffmanNode, code: Code, table: &mut HashMap<u8, Code>) {
+type EncodingTable = HashMap<u8, Code>;
+
+fn traverse(node: &HuffmanNode, code: Code, encoding_table: &mut EncodingTable) {
     println!("Traversing {}, {:#010b}:{}", node, code.bits, code.length);
     match node {
         HuffmanNode::Leaf { character, .. } => {
             let code_record = Code { bits: code.bits, length: code.length };
-            table.insert(*character, code_record);
+            encoding_table.insert(*character, code_record);
         }
         HuffmanNode::Parent { left, right, .. } => {
             // Left just increments the length, keeping a 0
-            traverse(left, Code { bits: code.bits, length: code.length + 1}, table);
+            traverse(left, Code { bits: code.bits, length: code.length + 1}, encoding_table);
             // Flips the next bit to '1'
             // 1 = 0b00000001
             // 1 << 7 = 0b10000000
             // 1 << 6 = 0b01000000 etc..
             let right_bits = code.bits | 1 << (7 - code.length);
-            traverse(right, Code { bits: right_bits, length: code.length + 1}, table);
+            traverse(right, Code { bits: right_bits, length: code.length + 1}, encoding_table);
         }
     }
 }
@@ -169,18 +176,23 @@ fn traverse(node: &HuffmanNode, code: Code, table: &mut HashMap<u8, Code>) {
 // Encoding Table
 ////////////////////////////////////////////////////////////////////////////////
 
-
 // Builds a map from character to binary code, so 'a'-> 10
-fn build_encoding_table(tree: &HuffmanNode) -> HashMap<u8, Code> {
-    let mut table = HashMap::new();
-    traverse(tree, Code { bits: 0, length: 0 }, &mut table);
-    table
+fn build_encoding_table(tree: &HuffmanNode) -> EncodingTable {
+    let mut encoding_table = HashMap::new();
+    traverse(tree, Code { bits: 0, length: 0 }, &mut encoding_table);
+    encoding_table
 }
 
 // Codec
 ////////////////////////////////////////////////////////////////////////////////
 
-fn encode_header(file: &mut File, frequencies: &HashMap<u8, u32>) -> IoResult<()> {
+struct Header {
+    num_entries: u32,
+    padding_bits: u8,
+    frequencies: FrequencyTable
+}
+
+fn encode_header(file: &mut File, frequencies: &FrequencyTable) -> IoResult<()> {
     file.write_all(b"HUFF")?;
     // Write unique number of chars in frequency table
     file.write_all(&(frequencies.len() as u32).to_le_bytes())?;
@@ -193,6 +205,27 @@ fn encode_header(file: &mut File, frequencies: &HashMap<u8, u32>) -> IoResult<()
         file.write_all(&frequency.to_le_bytes())?;
     }
     Ok(())
+}
+
+fn decode_header(file: &mut File) -> IoResult<Header> {
+    let mut reader = BufReader::new(file);
+    let mut huff_bytes = [0u8; 4];
+    match reader.read(&mut huff_bytes) {
+        Ok(_) => {
+            let value = u32::from_le_bytes(huff_bytes);
+            if huff_bytes != *b"HUFF" {
+                return Err(Error::new(
+                        ErrorKind::InvalidData,
+                        "Invalid file format"
+                ))
+            }
+            println!("Header OK!");
+            let frequencies = HashMap::new();
+            Ok(Header { num_entries: 0, padding_bits: 0, frequencies })
+        },
+        Err(e) => panic!("Error reading: {}", e),
+    }
+    //Header { num_entries, padding_bits, frequencies }
 }
 
 struct BitWriter<'a> {
@@ -255,8 +288,10 @@ impl<'a> BitWriter<'a> {
 }
 
 fn encode_file(
-    input_file: &mut File, output_file: &mut File,
-    frequencies: &HashMap<u8, u32>, encoding_table: &HashMap<u8, Code>
+    input_file: &mut File,
+    output_file: &mut File,
+    frequencies: &FrequencyTable,
+    encoding_table: &EncodingTable
 ) -> IoResult<()> {
 
     encode_header(output_file, frequencies)?;
@@ -291,7 +326,7 @@ fn encode_file(
     Ok(())
 }
 
-fn print_encoding_table(encoding_table: &HashMap<u8, Code>, frequencies: &HashMap<u8, u32>) {
+fn print_encoding_table(encoding_table: &EncodingTable, frequencies: &FrequencyTable) {
     for (character, frequency) in frequencies {
         let code = encoding_table.get(character).unwrap();
         println!("Char '{}' - freq: {}, encoding: {:#b}, length: {}",
@@ -318,6 +353,13 @@ fn encode(opts: &Options) -> IoResult<()> {
     Ok(())
 }
 
+fn decode(opts: &Options) -> IoResult<()> {
+    let mut input_file = File::open(&opts.input_filename).expect("Failed to open file");
+    let header = decode_header(&mut input_file)?;
+    println!("Header - entries: {}, padding: {}", header.num_entries, header.padding_bits);
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -331,7 +373,7 @@ fn main() {
         let opts = parse_args(&args);
         match opts.command.as_str() {
             "encode" => { let _ = encode(&opts); },
-            "decode" => println!("Decoding {} to {:?}", opts.input_filename, opts.output_filename),
+            "decode" => { let _ = decode(&opts); },
             _ => {
                 eprintln!("Error: Unknown command '{}'", opts.command);
                 print_usage(&args[0]);
