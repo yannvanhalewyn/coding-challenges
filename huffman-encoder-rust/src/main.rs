@@ -1,6 +1,7 @@
 use std::process::exit;
 use std::fs::File;
 use std::io::{BufReader, Read};
+use std::collections::HashMap;
 
 struct Options {
     command: String,
@@ -48,8 +49,10 @@ fn print_usage(program_name: &str) {
     println!("  {} decode test.txt.encoded -o restored.txt", program_name);
 }
 
-fn encode(opts: &Options) {
-    let input_file = File::open(&opts.input_filename).expect("Failed to open file");
+// Returns a map of ascii char to count (uint32)
+fn calculate_frequencies(input_file: File) -> HashMap<u8, u32> {
+    let mut frequencies = HashMap::new();
+
     let mut reader = BufReader::new(input_file);
     let mut buffer = [0; 1]; // 1-byte buffer
 
@@ -58,11 +61,19 @@ fn encode(opts: &Options) {
             Ok(0) => break, // EOF
             Ok(_) => {
                 let byte = buffer[0];
+                *frequencies.entry(byte).or_insert(0) += 1;
                 println!("Read byte: {}", byte);
             },
             Err(e) => panic!("Error reading: {}", e),
         }
     }
+    frequencies
+}
+
+fn encode(opts: &Options) {
+    let input_file = File::open(&opts.input_filename).expect("Failed to open file");
+    let frequencies = calculate_frequencies(input_file);
+    println!("Frequency: {}", frequencies.get(&b'l').unwrap_or(&0));
 }
 
 fn main() {
