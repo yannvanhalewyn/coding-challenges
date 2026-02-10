@@ -7,6 +7,7 @@
 #define false 0
 #define bool int
 
+// Technically this could overflow but it's very unlikely with typical data.
 #define ENCODING_TABLE_SIZE 256
 
 // Hufman Trees
@@ -45,10 +46,13 @@ bool is_leaf(HuffmanNode* node) {
     return node->left == NULL && node->right == NULL;
 }
 
+// Using Bubblesort would theoretically be more efficient
+// Practically it's usually a relatively small number of nodes and this part is
+// no bottleneck.
 void sort_nodes(HuffmanNode* nodes[], int count) {
     for (int i = 0; i < count - 1; i++) {
         for (int j = 0; j < count - i - 1; j++) {
-            if (nodes[j] == NULL || nodes[j]->weight > nodes[j+1]->weight) {
+            if (nodes[j]->weight > nodes[j+1]->weight) {
                 // Swap pointers
                 HuffmanNode* temp = nodes[j];
                 nodes[j] = nodes[j+1];
@@ -90,6 +94,14 @@ HuffmanNode* build_huffman_tree(unsigned int freq[], size_t freq_size) {
     }
 
     return nodes[0];
+}
+
+void free_huffman_tree(HuffmanNode* node) {
+    if (node != NULL) {
+        free_huffman_tree(node->left);
+        free_huffman_tree(node->right);
+        free(node);
+    }
 }
 
 // Prefix table
@@ -392,6 +404,7 @@ bool encode(const char *input_filename, const char *output_filename) {
     HuffmanCode encoding_table[ENCODING_TABLE_SIZE] = {0};
     char code_buffer[ENCODING_TABLE_SIZE];
     build_encoding_table(tree, code_buffer, 0, encoding_table);
+    free_huffman_tree(tree);
 
     // Preview Encoding Table
     printf("Code for 'e': %s\n", encoding_table['e'].code);
