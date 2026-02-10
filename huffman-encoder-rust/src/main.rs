@@ -203,8 +203,8 @@ fn encode_provisionary_header(file: &mut File, encoding_table: &EncodingTable) -
     // Write all the entries of the frequencies table
     for (character, code) in encoding_table {
         file.write_all(&[*character])?;
-        file.write_all(&code.bits.to_le_bytes())?;
         file.write_all(&[code.length])?;
+        file.write_all(&code.bits.to_le_bytes())?;
     }
     Ok(())
 }
@@ -237,15 +237,16 @@ fn decode_header(reader: &mut BufReader<File>) -> IoResult<Header> {
         reader.read_exact(&mut char_buffer)?;
         let char = char_buffer[0];
 
+        // Read length (1 byte) TODO swap with bits
+        let mut length_buffer = [0u8; 1];
+        reader.read_exact(&mut length_buffer)?;
+
+        let length = length_buffer[0];
         // Read bits
         let mut bits_buffer = [0u8; 4];
         reader.read_exact(&mut bits_buffer)?;
         let bits = u32::from_le_bytes(bits_buffer);
 
-        // Read length (1 byte) TODO swap with bits
-        let mut length_buffer = [0u8; 1];
-        reader.read_exact(&mut length_buffer)?;
-        let length = length_buffer[0];
         encoding_table.insert(char, Code { bits, length });
     }
     Ok(Header { num_entries, padding_bits, encoding_table })
