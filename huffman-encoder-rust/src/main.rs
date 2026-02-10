@@ -147,7 +147,7 @@ fn build_huffman_tree(frequencies: &FrequencyTable) -> Box<HuffmanNode> {
 }
 
 struct Code {
-    bits: u8,
+    bits: u32,
     length: u8,
 }
 
@@ -163,10 +163,11 @@ fn traverse(node: &HuffmanNode, code: Code, encoding_table: &mut EncodingTable) 
             // Left just increments the length, keeping a 0
             traverse(left, Code { bits: code.bits, length: code.length + 1}, encoding_table);
             // Flips the next bit to '1'
+            // Example with 8 bits but it's actually 32:
             // 1 = 0b00000001
             // 1 << 7 = 0b10000000
             // 1 << 6 = 0b01000000 etc..
-            let right_bits = code.bits | 1 << (7 - code.length);
+            let right_bits = code.bits | 1 << (31 - code.length);
             traverse(right, Code { bits: right_bits, length: code.length + 1}, encoding_table);
         }
     }
@@ -202,7 +203,7 @@ fn encode_provisionary_header(file: &mut File, encoding_table: &EncodingTable) -
     // Write all the entries of the frequencies table
     for (character, code) in encoding_table {
         file.write_all(&[*character])?;
-        file.write_all(&[code.bits])?;
+        file.write_all(&code.bits.to_le_bytes())?;
         file.write_all(&[code.length])?;
     }
     Ok(())
@@ -231,11 +232,20 @@ fn decode_header(reader: &mut BufReader<File>) -> IoResult<Header> {
 
     let mut encoding_table = HashMap::new();
     for _i in 0..num_entries {
-        let mut buffer = [0u8;3];
-        reader.read_exact(&mut buffer)?;
-        let char = buffer[0];
-        let bits = buffer[1];
-        let length = buffer[2];
+        // Read char
+        let mut char_buffer = [0u8;1];
+        reader.read_exact(&mut char_buffer)?;
+        let char = char_buffer[0];
+
+        // Read bits
+        let mut bits_buffer = [0u8; 4];
+        reader.read_exact(&mut bits_buffer)?;
+        let bits = u32::from_le_bytes(bits_buffer);
+
+        // Read length (1 byte) TODO swap with bits
+        let mut length_buffer = [0u8; 1];
+        reader.read_exact(&mut length_buffer)?;
+        let length = length_buffer[0];
         encoding_table.insert(char, Code { bits, length });
     }
     Ok(Header { num_entries, padding_bits, encoding_table })
@@ -245,7 +255,6 @@ struct BitWriter<'a> {
     current_byte: u8,
     bits_filled: u8,
     output_file: &'a mut File,
-    total_bits: u32,
 }
 
 impl<'a> BitWriter<'a> {
@@ -254,7 +263,6 @@ impl<'a> BitWriter<'a> {
             current_byte: 0,
             bits_filled: 0,
             output_file: file,
-            total_bits: 0,
         })
     }
 
@@ -264,7 +272,6 @@ impl<'a> BitWriter<'a> {
             self.current_byte |= 1 << (7 - self.bits_filled);
         }
         self.bits_filled += 1;
-        self.total_bits += 1;
 
         if self.bits_filled == 8 {
             self.output_file.write_all(&[self.current_byte])?;
@@ -274,7 +281,7 @@ impl<'a> BitWriter<'a> {
         Ok(())
     }
 
-    fn write_bits(&mut self, bits: u8, length: u8) -> IoResult<()> {
+    fn write_bits(&mut self, bits: u32, length: u8) -> IoResult<()> {
         for i in 0..length {
             // Example:
             //   bits = 0b11010000 and length = 4
@@ -283,7 +290,7 @@ impl<'a> BitWriter<'a> {
             // bits >> 6 = 0b00000011 (second bit to rightmost)
             // bits >> 5 = 0b00000110 (etc..)
             // bits >> 4 = 0b00001101
-            let bit = (bits >> (7 - i)) & 1;
+            let bit = (bits >> (31 - i)) & 1;
             self.write_bit(bit == 1)?;
         }
         Ok(())
@@ -425,21 +432,21 @@ impl<'a> BitReader<'a> {
 
 fn decode_file(reader: &mut BufReader<File>, output_file: &mut File, padding_bits: u8, encoding_table: &EncodingTable) -> IoResult<()> {
     // (bits, length) -> character
-    let mut decode_table: HashMap<(u8, u8), u8> = HashMap::new();
+    let mut decode_table: HashMap<(u32, u8), u8> = HashMap::new();
 
     for (character, code) in encoding_table {
         // encoded as 0b01000000. Store as 0b00000010 for decoding
-        let right_aligned_bits = code.bits >> (8 - code.length);
+        let right_aligned_bits = code.bits >> (32 - code.length);
         decode_table.insert((right_aligned_bits, code.length), *character);
     }
 
     let mut bit_reader = BitReader::new(reader, padding_bits)?;
 
-    let mut current_bits = 0u8;
+    let mut current_bits = 0u32;
     let mut current_length = 0u8;
 
     while let Ok(Some(bit)) = bit_reader.read_bit() {
-        current_bits = (current_bits << 1) | (bit as u8);
+        current_bits = (current_bits << 1) | (bit as u32);
         current_length += 1;
 
         if let Some(character) = decode_table.get(&(current_bits, current_length)) {
