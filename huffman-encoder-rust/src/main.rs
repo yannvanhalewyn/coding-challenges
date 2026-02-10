@@ -154,7 +154,6 @@ struct Code {
 type EncodingTable = HashMap<u8, Code>;
 
 fn traverse(node: &HuffmanNode, code: Code, encoding_table: &mut EncodingTable) {
-    println!("Traversing {}, {:#010b}:{}", node, code.bits, code.length);
     match node {
         HuffmanNode::Leaf { character, .. } => {
             let code_record = Code { bits: code.bits, length: code.length };
@@ -196,9 +195,7 @@ fn encode_provisionary_header(file: &mut File, encoding_table: &EncodingTable) -
     file.write_all(b"HRST")?; // Huffman Rust
     // Write unique number of chars in frequency table
     file.write_all(&(encoding_table.len() as u32).to_le_bytes())?;
-    // TMP print pos
-    let pos = file.stream_position()?;
-    println!("Pos: {}", pos);
+
     // Write 1 placeholder byte for the padding to be written later
     file.write_all(&0u8.to_le_bytes())?;
 
@@ -325,9 +322,6 @@ fn encode_file(
                 let byte = buffer[0];
                 match encoding_table.get(&byte) {
                     Some(code) => {
-                        println!("Char '{}', Code: {:#010b}, count: {}",
-                            byte as char, code.bits, code.length
-                        );
                         bit_writer.write_bits(code.bits, code.length)?;
                     },
                     None => {
@@ -370,7 +364,6 @@ impl<'a> BitReader<'a> {
     pub fn new(reader: &'a mut BufReader<File>, padding_bits: u8) -> IoResult<Self> {
         // Eagerly load first two bytes
         let current_byte = Self::read_byte(reader)?;
-        println!("NEW Byte: {:?}", current_byte);
         let next_byte = if current_byte.is_some() {
             Self::read_byte(reader)?
         } else {
@@ -412,7 +405,6 @@ impl<'a> BitReader<'a> {
             None => return Ok(None), // EOF
         };
 
-        println!("read_bit - current byte: {:#010b}, bit_index: {}", byte, self.bit_index);
         let is_last_byte = self.next_byte.is_none();
         let valid_bits = if is_last_byte { 8 - self.padding_bits } else { 8 };
 
@@ -427,7 +419,6 @@ impl<'a> BitReader<'a> {
             self.advance()?;
         }
 
-        println!("Bit: {}", bit);
         Ok(Some(bit))
     }
 }
@@ -437,7 +428,9 @@ fn decode_file(reader: &mut BufReader<File>, output_file: &mut File, padding_bit
     let mut decode_table: HashMap<(u8, u8), u8> = HashMap::new();
 
     for (character, code) in encoding_table {
-        decode_table.insert((code.bits, code.length), *character);
+        // encoded as 0b01000000. Store as 0b00000010 for decoding
+        let right_aligned_bits = code.bits >> (8 - code.length);
+        decode_table.insert((right_aligned_bits, code.length), *character);
     }
 
     let mut bit_reader = BitReader::new(reader, padding_bits)?;
@@ -446,12 +439,10 @@ fn decode_file(reader: &mut BufReader<File>, output_file: &mut File, padding_bit
     let mut current_length = 0u8;
 
     while let Ok(Some(bit)) = bit_reader.read_bit() {
-        println!("READ BIT, {}", bit);
         current_bits = (current_bits << 1) | (bit as u8);
         current_length += 1;
 
         if let Some(character) = decode_table.get(&(current_bits, current_length)) {
-            println!("Character: {}", character);
             output_file.write_all(&[*character])?;
             current_bits = 0;
             current_length = 0;
@@ -497,7 +488,10 @@ fn decode(opts: &Options) -> IoResult<()> {
 
     // Write decoded data to output_file
     let mut output_file = File::create(&opts.output_filename).expect("Failed to open file");
-    decode_file(&mut reader, &mut output_file, header.padding_bits, &header.encoding_table)?;
+    match decode_file(&mut reader, &mut output_file, header.padding_bits, &header.encoding_table) {
+        Ok(()) => println!("Decoding successful"),
+        Err(e) => eprintln!("Encoding failed: {}", e),
+    }
     Ok(())
 }
 
